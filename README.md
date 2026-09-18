@@ -53,7 +53,7 @@ flowchart LR
     D[NCBI Assembly + Gene] -->|GenoTy.py<br/>once per gene| E[Per-gene presence tables]
     E -->|GenoTy_Merge.py| F[Per-genome gene counts<br/>+ confidence]
  
-    G[BLAST vs nr / nt_prok] -->|SciFind.py| H[Hit table with<br/>names restored]
+    G[BLAST] -->|SciFind.py| H[Hit table with<br/>names restored]
 ```
  
 A typical combined use: mine the literature for organisms with a demonstrated
