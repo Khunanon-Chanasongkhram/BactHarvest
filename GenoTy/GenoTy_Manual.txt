@@ -1,0 +1,181 @@
+GenoTy Manual
+=============
+Version 1.1 | Author: Khunanon Chanasongkhram
+
+GenoTy is a command-line tool for scanning NCBI genome databases to identify
+which organisms carry a specific gene marker. It consists of two scripts:
+  - GenoTy.py       : Main genotyping engine
+  - GenoTy_Merge.py : Merges results from multiple gene scans
+
+
+==============================================================================
+REQUIREMENTS
+==============================================================================
+
+Python 3 is required. The following libraries are installed automatically
+on first run if not already present:
+
+  - biopython
+  - pandas
+  - tqdm
+
+An NCBI account email is required. An NCBI API key is optional but recommended
+for faster processing.
+
+
+==============================================================================
+GenoTy.py — MAIN GENOTYPING SCRIPT
+==============================================================================
+
+USAGE
+-----
+  python3 GenoTy.py --gene GENE --email EMAIL [options]
+
+REQUIRED ARGUMENTS
+------------------
+  --gene GENE       Gene symbol to search for (e.g. nifH, mcrA, lacZ)
+  --email EMAIL     Your email address (required by NCBI for API access)
+
+OPTIONAL ARGUMENTS
+------------------
+  --taxon TAXON     Taxonomic group to scan. Choices:
+                      Bacteria  (default)
+                      Archaea
+                      Eukaryota
+                      Viruses
+                      All
+
+  --level LEVEL     Genome assembly level to include. Choices:
+                      Reference   (default) — highest quality, curated genomes
+                      Annotated   — all genomes with RefSeq annotation
+                      Total       — all genomes regardless of annotation
+
+  --api_key KEY     NCBI API key. Enables high-speed mode (10 req/sec).
+                    Without a key, the standard rate limit is 3 req/sec.
+
+  --out FILENAME    Output CSV filename.
+                    Default: GenoTy_<taxon>_<gene>.csv
+                    Example: GenoTy_Bacteria_nifH.csv
+
+EXAMPLES
+--------
+  # Scan Reference Bacterial genomes for nifH
+  python3 GenoTy.py --gene "nifH" --email "you@example.com" --taxon Bacteria --level Reference
+
+  # Scan Annotated Archaeal genomes for mcrA, with API key
+  python3 GenoTy.py --gene "mcrA" --email "you@example.com" --taxon Archaea --level Annotated --api_key YOUR_KEY
+
+  # Scan all Virus genomes for terminase, save to custom filename
+  python3 GenoTy.py --gene "terminase" --email "you@example.com" --taxon Viruses --level Total --out virus_terminase.csv
+
+OUTPUT
+------
+A CSV file is saved in the current directory with the following columns:
+
+  Organism Name      — Scientific name of the organism (parenthetical strain
+                       info removed for clarity)
+  Genome Accession   — NCBI Assembly accession number (e.g. GCF_000001405.40)
+  Genotype Status    — Always "Positive" (only matching genomes are reported)
+  Gene Symbol        — The gene symbol as recorded in NCBI Gene
+  Gene Description   — Full gene description from NCBI Gene
+  GeneID             — NCBI Gene database ID
+  TaxID              — NCBI Taxonomy ID of the organism
+
+Each row represents one genome. Results are deduplicated by Genome Accession
+and sorted alphabetically by Organism Name.
+
+HOW IT WORKS
+------------
+The tool runs in two phases:
+
+  Phase 1 — Genome Indexing:
+    Queries the NCBI Assembly database using your --taxon and --level filters.
+    Builds an internal map of TaxID → genome accession for all matching
+    assemblies (up to 500,000 genomes). This is the allow-list used in Phase 2.
+
+  Phase 2 — Gene Scanning:
+    Queries the NCBI Gene database for your target gene (by symbol/name),
+    filtered to RefSeq entries. Each candidate is checked against:
+
+      1. TaxID match — gene must belong to an organism in the Phase 1 allow-list
+      2. Exact symbol match — gene symbol must match exactly (case-insensitive)
+      3. Bad keyword filter — entries whose description contains "regulator",
+         "repressor", "inhibitor", or "pseudo" are excluded to avoid false
+         positives from non-functional gene variants
+
+TIPS
+----
+- Use --level Reference for the most reliable results (curated assemblies).
+- Use --level Annotated or Total to broaden coverage at the cost of more noise.
+- An NCBI API key significantly reduces scan time for large taxon groups.
+  Register for a free key at: https://www.ncbi.nlm.nih.gov/account/
+- To scan multiple genes, run GenoTy.py once per gene, then use
+  GenoTy_Merge.py to combine the results.
+
+
+==============================================================================
+GenoTy_Merge.py — RESULTS MERGER
+==============================================================================
+
+USAGE
+-----
+  python3 GenoTy_Merge.py
+
+Run this script in the same directory as your GenoTy output CSV files.
+It requires no arguments.
+
+PURPOSE
+-------
+When you have run GenoTy.py for multiple genes and want to know which genomes
+carry more than one gene of interest, GenoTy_Merge.py consolidates all result
+files into a single report grouped by genome.
+
+HOW IT WORKS
+------------
+  1. Reads all *.csv files in the current directory (excluding any previously
+     generated GenoTy_Merged_Output.csv to avoid double-counting).
+  2. Groups rows by Genome Accession.
+  3. For each genome, merges values across all gene result files:
+       - Gene Symbol      : comma-separated, sorted, deduplicated
+       - Gene Description : pipe-separated ( | )
+       - GeneID           : comma-separated
+       - Organism Name    : taken from first occurrence
+       - Genotype Status  : taken from first occurrence
+       - TaxID            : taken from first occurrence
+  4. Calculates Gene Count (number of distinct genes found per genome).
+  5. Assigns a Confidence score:
+       High  — 8 genes found
+       Low   — fewer than 8 genes found
+
+OUTPUT
+------
+File: GenoTy_Merged_Output.csv
+
+Columns:
+  Organism Name     — Scientific name of the organism
+  Genome Accession  — NCBI Assembly accession number
+  Gene Symbol       — All matched gene symbols (comma-separated)
+  Gene Count        — Number of distinct genes found in this genome
+  Confidence        — High (8 genes) or Low (fewer than 8)
+  GeneID            — NCBI Gene IDs for all matched genes (comma-separated)
+  Gene Description  — Descriptions for all matched genes (pipe-separated)
+  Genotype Status   — Genotype result (from source files)
+  TaxID             — NCBI Taxonomy ID
+
+
+==============================================================================
+TYPICAL WORKFLOW EXAMPLE
+==============================================================================
+
+  # Step 1: Scan for multiple genes of interest
+  python3 GenoTy.py --gene "entA" --email "you@example.com" --taxon Bacteria
+  python3 GenoTy.py --gene "entB" --email "you@example.com" --taxon Bacteria
+  python3 GenoTy.py --gene "entC" --email "you@example.com" --taxon Bacteria
+  python3 GenoTy.py --gene "entE" --email "you@example.com" --taxon Bacteria
+
+  # Step 2: Merge all results into one report
+  python3 GenoTy_Merge.py
+
+  # Output: GenoTy_Merged_Output.csv
+  # Shows which genomes contain 1, 2, 3, or all 4 genes,
+  # with Confidence = High if all 8 expected genes are present.

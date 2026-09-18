@@ -1,0 +1,393 @@
+==============================================================================
+MicroScope.py v1.1.0 - USER MANUAL Author: Khunanon Chanasongkhram
+==============================================================================
+
+WHAT IS THIS?
+-------------
+MicroScope.py is a text-mining tool for biologists. It searches PubMed for
+specific bacterial phenotypes (e.g., "Nitrogen Fixation"), downloads abstracts
+and open-access full-text sections, and scores them to extract valid
+experimental evidence — filtering out gene-based identification methods,
+cloning hosts, plants, and speculative language.
+
+Results are saved as a ranked table showing which bacteria were experimentally
+shown to have the phenotype, the assay used to prove it, and the numeric
+performance value reported (e.g., 42.3 µg/mL IAA).
+
+SUPPORTED PHENOTYPES
+--------------------
+The following phenotype categories have built-in assay vocabularies and
+numeric pattern matching. You can still search any free-text phenotype
+using --phenotype, but use --phenotype_category to force a specific category
+for best accuracy.
+
+  IAA            - IAA / Auxin Production
+  NITROGEN       - Nitrogen Fixation
+  PHOSPHATE      - Phosphate Solubilization
+  SIDEROPHORE    - Siderophore Production
+  ACC_DEAMINASE  - ACC Deaminase Activity
+  BIOFILM        - Biofilm Formation
+  HYDROGEN       - Hydrogen Production
+
+PREREQUISITES
+-------------
+1. Python 3.8 or higher.
+   - Windows: https://www.python.org/downloads/windows/
+   - Linux:   Usually pre-installed. Run: python3 --version
+
+2. An internet connection (for PubMed API).
+
+3. Dependencies are installed automatically on the first run:
+   biopython, pandas, tqdm, certifi
+
+   If auto-install fails, install manually:
+     pip install biopython pandas tqdm certifi
+   On some Linux systems (PEP 668):
+     pip install --break-system-packages biopython pandas tqdm certifi
+
+==============================================================================
+SECTION 1: SETUP
+==============================================================================
+
+No setup is required beyond having Python 3.8+. Place MicroScope.py anywhere
+and run it directly. Dependencies are checked and installed automatically.
+
+Optional — Virtual Environment (avoids system conflicts):
+
+  Linux / macOS:
+    python3 -m venv microscope_env
+    source microscope_env/bin/activate
+    python3 MicroScope.py ...
+
+  Windows:
+    python -m venv microscope_env
+    microscope_env\Scripts\activate
+    python MicroScope.py ...
+
+==============================================================================
+SECTION 2: HOW TO RUN
+==============================================================================
+
+Basic syntax:
+  python3 MicroScope.py --phenotype "TERM" --email "YOUR_EMAIL" [OPTIONS]
+
+----------------------------------------------------------------------
+EXAMPLE 1: Standard search (default 100 articles, min score 5)
+----------------------------------------------------------------------
+  python3 MicroScope.py \
+      --phenotype "nitrogen fixation" \
+      --email "you@example.com"
+
+----------------------------------------------------------------------
+EXAMPLE 2: Large dataset with API key (faster, 10 req/s)
+----------------------------------------------------------------------
+  python3 MicroScope.py \
+      --phenotype "phosphate solubilization" \
+      --email "you@example.com" \
+      --api_key "YOUR_NCBI_API_KEY" \
+      --max_articles 1000
+
+----------------------------------------------------------------------
+EXAMPLE 3: High-strictness run — only rows with measured numbers
+----------------------------------------------------------------------
+  python3 MicroScope.py \
+      --phenotype "IAA production" \
+      --email "you@example.com" \
+      --min_score 8 \
+      --strict_metric
+
+----------------------------------------------------------------------
+EXAMPLE 4: Force phenotype category, save CSV and JSON
+----------------------------------------------------------------------
+  python3 MicroScope.py \
+      --phenotype "siderophore" \
+      --email "you@example.com" \
+      --phenotype_category SIDEROPHORE \
+      --output_format both \
+      --out results_siderophore.csv
+
+----------------------------------------------------------------------
+EXAMPLE 5: Resume an interrupted run
+----------------------------------------------------------------------
+  python3 MicroScope.py \
+      --phenotype "nitrogen fixation" \
+      --email "you@example.com" \
+      --resume \
+      --cache_file nitrogen_cache.json
+
+----------------------------------------------------------------------
+EXAMPLE 6: Full run — verify taxonomy, skip genome lookup, verbose log
+----------------------------------------------------------------------
+  python3 MicroScope.py \
+      --phenotype "phosphate" \
+      --email "you@example.com" \
+      --api_key "YOUR_KEY" \
+      --max_articles 5000 \
+      --phenotype_category PHOSPHATE \
+      --verify_taxonomy \
+      --skip_genome \
+      --output_format both \
+      --out results_PSB.csv \
+      --resume \
+      --cache_file psb_cache.json \
+      --log_level DEBUG
+
+==============================================================================
+SECTION 3: ALL ARGUMENTS
+==============================================================================
+
+REQUIRED
+--------
+--phenotype TEXT
+    The biological function to search for.
+    Tip: Use scientific nouns ("solubilization") not verbs ("solubilizing").
+    Tip: The first word drives keyword matching — put the key term first.
+    Examples: "nitrogen fixation", "phosphate solubilization", "IAA production"
+
+--email TEXT
+    Your email address, required by NCBI for API access.
+
+SEARCH CONTROL
+--------------
+--max_articles INT        (default: 100)
+    How many PubMed abstracts to download.
+    Warning: >2000 is slow without an API key.
+    Articles are fetched newest-first (most recent publication date), so this
+    cap always prioritizes recent research over older papers.
+    Values above 10,000 are paged automatically through the NCBI history
+    server (earlier versions silently stopped at the first 10,000).
+
+--year_from INT / --year_to INT
+    Restrict the PubMed search to a publication-year window. Either can be
+    used alone: --year_from 2015 means 2015 to present, --year_to 2010 means
+    everything up to 2010.
+    Example: --year_from 2018 --year_to 2024
+
+--api_key TEXT
+    NCBI API Key. Increases rate limit from 3 to 10 requests/second.
+    Get a free key: https://www.ncbi.nlm.nih.gov/account/
+
+--phenotype_category {IAA,NITROGEN,PHOSPHATE,SIDEROPHORE,ACC_DEAMINASE,BIOFILM,HYDROGEN}
+    Force a specific built-in phenotype category instead of auto-detection.
+    Recommended whenever your search term matches one of the supported categories,
+    as it enables precise assay matching and numeric pattern extraction.
+
+FILTERING
+---------
+--min_score INT           (default: 5)
+    Minimum evidence score required to include a result row.
+    2  = Loose  — any mention of the organism + phenotype
+    5  = Medium — requires a strong action word ("produces", "production",
+         "degraded", "solubilisation")
+    8  = Strict — requires a detected experimental assay method
+    14 = Very strict — requires multiple lines of strong evidence
+
+    Note for v0.8.0: action words are now matched by word stem, so noun forms
+    ("IAA production") and British spellings ("solubilisation") score the same
+    as the plain verb. Sentences that previously scored 5-7 for that reason now
+    typically score 8-11, so a given --min_score returns noticeably more rows
+    than it did in v0.7.0. Raise the threshold if you want the old strictness.
+
+--strict_metric
+    Only keep rows that have an extracted numeric performance value.
+    Use this when you want a clean table of measured results only.
+
+--negative_evidence
+    Invert the search. Instead of finding organisms proven to HAVE the
+    phenotype, finds organisms wet-lab-proven to NOT have it (e.g. "failed
+    to fix nitrogen", "no siderophore activity detected", "undetected").
+    Any organism that also shows positive evidence for the phenotype
+    elsewhere in the same article is excluded — this mode only returns
+    organisms confirmed as non-performers.
+    Output rows get "phenotype_status" = Negative (default runs = Positive).
+    Useful for building negative-control datasets or ruling organisms out.
+    Note: --strict_metric is ignored in this mode (a negative result has no
+    performance value to report).
+
+--verify_taxonomy
+    Verify every reported organism name against the NCBI Taxonomy database.
+    Removes typos and unrecognized names.
+    Only organisms that already passed --min_score are looked up, so the cost
+    is one API call per organism you actually keep, not per name mentioned.
+
+--discover_genera          (requires --verify_taxonomy)
+    Normally MicroScope only recognizes genera from its built-in whitelist
+    (see BACTERIAL_GENERA in the script), which is precise but blind to any
+    genus not on that list. This flag accepts any plausible binomial instead,
+    then requires each newly seen name to resolve inside the Bacteria/Archaea
+    subtree of NCBI Taxonomy before it can appear in the output — so plants,
+    fungi and insects are still filtered out.
+    Use it when mining an unfamiliar clade or when you suspect relevant
+    organisms are being missed. Expect a slower run and review the results:
+    recall goes up, and so does the chance of an odd name slipping through.
+
+OUTPUT
+------
+--out PATH                (default: results_MicroScope.csv)
+    Output file base path. The correct extension is added automatically.
+
+--output_format {csv,json,both}   (default: csv)
+    csv  — spreadsheet-compatible (recommended for most users)
+    json — machine-readable, nested structure
+    both — writes both files
+
+--skip_genome
+    Skip looking up NCBI Genome Assembly accession IDs.
+    Use this for faster runs when you only need the text evidence.
+
+RESUME / CACHE
+--------------
+--resume
+    Skip PMIDs that are already stored in the cache file.
+    Use this to continue a run that was interrupted (Ctrl+C, network error, etc.).
+    Articles that produced no results are cached too, so a resumed run does not
+    re-download and re-analyse them (they are the majority of any search).
+
+--cache_file PATH         (default: microscope_cache.json)
+    Path to the JSON cache file used by --resume.
+    Use different cache files for different searches.
+
+LOGGING
+-------
+--log_level {DEBUG,INFO,WARNING,ERROR}   (default: INFO)
+    INFO    — normal progress messages
+    DEBUG   — verbose; shows per-article details and API calls
+    WARNING — only problems
+    ERROR   — only critical failures
+
+==============================================================================
+SECTION 4: OUTPUT COLUMNS EXPLAINED
+==============================================================================
+
+The output CSV/JSON contains one row per organism per article.
+
+  pmid                        PubMed article ID.
+  pmc_id                      PubMed Central ID (if open-access full text was used).
+  pub_year                    Publication year, when available from PubMed metadata.
+  organism                    Bacterial species name extracted from the text.
+  taxonomy_id                 NCBI Taxonomy ID (only when --verify_taxonomy is used).
+  phenotype                   The search term you provided.
+  phenotype_status            "Positive" (organism can do it) or "Negative"
+                              (organism wet-lab-proven NOT to do it — only
+                              appears when --negative_evidence is used).
+  confidence                  Tier based on evidence score:
+                                Very High (score ≥ 14)
+                                High      (score ≥  9)
+                                Medium    (score ≥  5)
+                                Low       (score <  5)
+  performance_value           Numeric measurement extracted from the text (float).
+                              Results are sorted by this column (highest first).
+  performance_unit            Normalized unit (e.g., µg/mL, nmol/mg/h, mm, %).
+  performance_range           Min–max range if reported (e.g., "12.3 – 45.6").
+  performance_metric          Raw text of the measurement as it appeared in the paper.
+  performance_method          The experimental assay used to prove the phenotype.
+                              Gene-based methods (PCR, sequencing, BLAST, etc.)
+                              are excluded — only wet-lab assays are reported.
+                              Marked "(Inferred)" when taken from a nearby sentence.
+                              Marked "(Reported)" when the assay isn't one of the
+                              curated method categories but was still named directly
+                              in the text (e.g. "using the disc diffusion assay").
+  performance_evidence_sentence
+                              The exact sentence(s) from the abstract or full text
+                              that contain the evidence.
+  genome_accession            A genome/assembly accession for the organism
+                              (e.g., GCF_000..., or a GenBank/WGS accession).
+                              Empty when --skip_genome is used and the paper
+                              itself reports no accession.
+  genome_source               Where genome_accession came from:
+                                "Reported in Paper" — the article itself states
+                                  a deposition accession for this organism
+                                  (GenBank/RefSeq/WGS/BioProject/BioSample,
+                                  found near "deposited"/"accession"/"genome"
+                                  language). This is the strain actually studied.
+                                "NCBI Lookup" — no accession was found in the
+                                  text, so MicroScope searched NCBI Assembly by
+                                  organism name instead. This finds *some*
+                                  genome for the species, not necessarily the
+                                  exact strain the paper studied — treat it as
+                                  weaker, supplementary evidence.
+                                (empty) — no accession available from either
+                                  source, or --skip_genome was used.
+  evidence_score              Raw numeric score used to rank and filter results.
+  title                       Title of the source article.
+
+==============================================================================
+SECTION 5: SCORING EXPLAINED
+==============================================================================
+
+Each sentence is scored independently. The organism's best-scoring sentence
+determines what appears in the output.
+
+  +2   Phenotype keyword present in the sentence
+  +3   Strong action verb ("produce", "fix", "solubilize", "secrete", etc.)
+  +1   Additional strong verb (if more than one)
+  +2   Confirmation language ("demonstrated", "confirmed", "showed", etc.)
+  +1   Standout qualifier ("highest", "optimal", "significant", etc.)
+  +2   Experimental assay method detected
+  +1   Each additional distinct method (capped at +2 extra)
+  +5   Bonus when a numeric measurement is extracted from the sentence
+
+  -11  Weak/speculative context ("hypothesized", "suggests", "future studies")
+  =0   Negation detected ("failed to", "unable to", "no activity")
+  -10  Cross-organism interference (another organism name is closer in the sentence)
+
+==============================================================================
+SECTION 6: GETTING AN NCBI API KEY
+==============================================================================
+
+Without an API key: 3 requests/second (slow for large runs).
+With an API key:   10 requests/second (~3x faster).
+
+1. Create a free NCBI account: https://www.ncbi.nlm.nih.gov/account/
+2. Go to Account Settings → API Key Management.
+3. Click "Create an API Key".
+4. Use it with: --api_key "YOUR_KEY"
+
+==============================================================================
+SECTION 7: TROUBLESHOOTING
+==============================================================================
+
+PROBLEM: "Found 0 articles"
+CAUSE:   SSL certificate error (common on Windows) or no network access.
+FIX:     The script fixes SSL automatically using certifi.
+         If it still fails, install certifi manually:
+           pip install certifi
+
+PROBLEM: "Permission denied" when installing dependencies (Linux)
+CAUSE:   System Python blocks pip installs (PEP 668).
+FIX:     Use a virtual environment (see Section 1), or the script will
+         automatically retry with --break-system-packages.
+
+PROBLEM: Script is very slow
+CAUSE:   Without an API key, NCBI limits to 3 requests/second.
+FIX:     Get a free API key (see Section 6) and use --api_key.
+         Also use --skip_genome if you don't need genome accession IDs.
+
+PROBLEM: "ERROR ... IncompleteRead" or other network errors during a run
+CAUSE:   NCBI dropped or truncated the connection mid-response — common on
+         large bulk pulls (high --max_articles) or unstable connections.
+FIX:     Nothing to do — this is handled automatically. Every NCBI request
+         retries up to 3 times with backoff before giving up; you'll see a
+         WARNING "... retrying in Ns" line first. An ERROR line only appears
+         if all 3 retries failed, in which case that one batch/article/lookup
+         is skipped and the rest of the run continues normally.
+
+PROBLEM: Run was interrupted and I don't want to start over
+FIX:     Re-run with the same command plus:
+           --resume --cache_file YOUR_CACHE.json
+         Already-processed PMIDs are loaded from cache instantly.
+
+PROBLEM: Results include organisms I didn't expect
+FIX:     Increase --min_score (try 8).
+         Use --phenotype_category to restrict to a specific assay vocabulary.
+         Use --strict_metric to keep only rows with a measured number.
+         Use --verify_taxonomy to remove unrecognized organism names.
+
+PROBLEM: performance_method shows "Not Explicitly Stated"
+CAUSE:   No recognized experimental assay keyword was found near the phenotype
+         term in the evidence sentence.
+FIX:     This is normal for some abstracts. The evidence sentence is still
+         saved — check performance_evidence_sentence for the assay context.
+         Gene-based methods (PCR, sequencing) are intentionally excluded.
+
+
